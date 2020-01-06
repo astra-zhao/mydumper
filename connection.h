@@ -1,4 +1,4 @@
-/* 
+/*
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
@@ -12,18 +12,14 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-    Authors:        Andrew Hutchings, SkySQL (andrew at skysql dot com)
+    Authors:        Aaron Brady, Shopify (insom)
 */
-#ifndef _server_detect_h
-#define _server_detect_h
-
+#ifndef _connection_h
+#define _connection_h
 #include <mysql.h>
 
-#define DETECT_MYSQL_REGEX "^([3-9]\\.[0-9]+\\.[0-9]+)"
-#define DETECT_DRIZZLE_REGEX "^(20[0-9]{2}\\.(0[1-9]|1[012])\\.[0-9]+)"
-#define DETECT_MARIADB_REGEX "^([0-9]{1,2}\\.[0-9]+\\.[0-9]+)"
-#define DETECT_TIDB_REGEX "TiDB"
-
-enum server_type { SERVER_TYPE_UNKNOWN, SERVER_TYPE_MYSQL, SERVER_TYPE_DRIZZLE, SERVER_TYPE_TIDB };
-int detect_server(MYSQL *conn);
+void configure_connection(MYSQL *conn, const char* name);
+void pre_resolve_host(const char *host);
+MYSQL *mysql_connect_wrap(MYSQL *mysql, const char *user, const char *passwd, const char *db, unsigned int port,
+                          const char *unix_socket, unsigned long client_flag);
 #endif

@@ -19,6 +19,11 @@
 #define _FILE_OFFSET_BITS 64
 
 #include <mysql.h>
+
+#if defined MARIADB_CLIENT_VERSION_STR && !defined MYSQL_SERVER_VERSION
+	#define MYSQL_SERVER_VERSION MARIADB_CLIENT_VERSION_STR
+#endif
+
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
@@ -31,7 +36,9 @@
 #include <assert.h>
 #include "common.h"
 #include "myloader.h"
+#include "connection.h"
 #include "config.h"
+#include "getPassword.h"
 
 guint commit_count= 1000;
 gchar *directory= NULL;
@@ -114,10 +121,19 @@ int main(int argc, char *argv[]) {
 	}
 	g_option_context_free(context);
 
+	//prompt for password if it's NULL
+	if ( sizeof(password) == 0 || ( password == NULL && askPassword ) ){
+		password = passwordPrompt();
+	}
+
 	if (program_version) {
-		g_print("myloader %s, built against MySQL %s\n", VERSION, MYSQL_SERVER_VERSION);
+		g_print("myloader %s (%s), built against MySQL %s\n", VERSION, GIT_COMMIT_HASH, MYSQL_VERSION_STR);
 		exit(EXIT_SUCCESS);
 	}
+
+	// resolve hostname if possible
+	resolve_ips = g_array_new(FALSE, FALSE, sizeof(char *));
+	pre_resolve_host(hostname);
 
 	set_verbose(verbose);
 
@@ -131,16 +147,11 @@ int main(int argc, char *argv[]) {
 			exit(EXIT_FAILURE);
 		}
 	}
-
 	MYSQL *conn;
 	conn= mysql_init(NULL);
 
-	if (defaults_file != NULL) {
-		mysql_options(conn,MYSQL_READ_DEFAULT_FILE,defaults_file);
-	}
-	mysql_options(conn, MYSQL_READ_DEFAULT_GROUP, "myloader");
-
-	if (!mysql_real_connect(conn, hostname, username, password, NULL, port, socket_path, 0)) {
+	configure_connection(conn,"myloader");
+	if (!mysql_connect_wrap(conn, username, password, NULL, port, socket_path, 0)) {
 		g_critical("Error connection to database: %s", mysql_error(conn));
 		exit(EXIT_FAILURE);
 	}
@@ -153,7 +164,6 @@ int main(int argc, char *argv[]) {
 		mysql_query(conn, "SET SQL_LOG_BIN=0");
 
 	mysql_query(conn, "/*!40014 SET FOREIGN_KEY_CHECKS=0*/");
-	mysql_query(conn, "set @@session.tidb_skip_constraint_check=1;");
 	conf.queue= g_async_queue_new();
 	conf.ready= g_async_queue_new();
 
@@ -207,7 +217,7 @@ void restore_databases(struct configuration *conf, MYSQL *conn) {
 	// restore schema in sort
 	count = scandir(directory, &namelist, 0, alphasort);
 	if (count < 0) {
-		g_critical("cannot open directory %s, error: %s\n", directory, strerror(count));
+		g_critical("cannot open directory %s, error: %s\n", directory, strerror(errno));
 		assert(0);
 	}
 	n = 0;
@@ -337,10 +347,12 @@ void create_database(MYSQL *conn, gchar *database){
 	if((db == NULL && source_db == NULL) || (db != NULL && source_db != NULL && !g_ascii_strcasecmp(db, source_db))){
 		const gchar* filename= g_strdup_printf("%s-schema-create.sql", db ? db : database);
 		const gchar* filenamegz= g_strdup_printf("%s-schema-create.sql.gz", db ? db : database);
+		const gchar* filepath= g_strdup_printf("%s/%s-schema-create.sql", directory, db ? db : database);
+		const gchar* filepathgz= g_strdup_printf("%s/%s-schema-create.sql.gz", directory, db ? db : database);
 
-		if (g_file_test (filename, G_FILE_TEST_EXISTS)){
+		if (g_file_test (filepath, G_FILE_TEST_EXISTS)){
 			restore_data(conn, database, NULL, filename, TRUE, FALSE);
-		}else if (g_file_test (filenamegz, G_FILE_TEST_EXISTS)){
+		}else if (g_file_test (filepathgz, G_FILE_TEST_EXISTS)){
 			restore_data(conn, database, NULL, filenamegz, TRUE, FALSE);
 		}else{
 			query= g_strdup_printf("CREATE DATABASE `%s`", db ? db : database);
@@ -414,15 +426,9 @@ void *process_queue(struct thread_data *td) {
 	MYSQL *thrconn= mysql_init(NULL);
 	g_mutex_unlock(init_mutex);
 
-	if (defaults_file != NULL) {
-		mysql_options(thrconn,MYSQL_READ_DEFAULT_FILE,defaults_file);
-	}
-	mysql_options(thrconn, MYSQL_READ_DEFAULT_GROUP, "myloader");
+	configure_connection(thrconn,"myloader");
 
-	if (compress_protocol)
-		mysql_options(thrconn, MYSQL_OPT_COMPRESS, NULL);
-
-	if (!mysql_real_connect(thrconn, hostname, username, password, NULL, port, socket_path, 0)) {
+	if (!mysql_connect_wrap(thrconn, username, password, NULL, port, socket_path, 0)) {
 		g_critical("Failed to connect to MySQL server: %s", mysql_error(thrconn));
 		exit(EXIT_FAILURE);
 	}
@@ -437,7 +443,6 @@ void *process_queue(struct thread_data *td) {
 	mysql_query(thrconn, "/*!40101 SET NAMES binary*/");
 	mysql_query(thrconn, "/*!40101 SET SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */");
 	mysql_query(thrconn, "/*!40014 SET UNIQUE_CHECKS=0 */");
-	mysql_query(thrconn, "set @@session.tidb_skip_constraint_check=1;");
 	mysql_query(thrconn, "SET autocommit=0");
 
 	g_async_queue_push(conf->ready, GINT_TO_POINTER(1));

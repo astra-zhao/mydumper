@@ -1,7 +1,14 @@
 cmake_minimum_required(VERSION 2.6)
 project(mydumper)
-set(VERSION 0.9.2)
+set(VERSION 0.9.5)
 set(ARCHIVE_NAME "${CMAKE_PROJECT_NAME}-${VERSION}")
+
+execute_process(
+  COMMAND git rev-parse HEAD
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  OUTPUT_VARIABLE GIT_COMMIT_HASH
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
 
 #Required packages
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules)
@@ -17,6 +24,7 @@ if (BUILD_DOCS)
 endif (BUILD_DOCS)
 
 option(WITH_BINLOG "Build binlog dump options" OFF)
+option(WITH_SSL "Build SSL support" ON)
 
 set(CMAKE_C_FLAGS "-Wall -Wno-deprecated-declarations -Wunused -Wwrite-strings -Wno-strict-aliasing -Wextra -Wshadow -Werror -O3 -g ${MYSQL_CFLAGS}")
 
@@ -29,17 +37,24 @@ MARK_AS_ADVANCED(CMAKE)
 
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_SOURCE_DIR}/config.h)
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread")
+SET(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+SET(BUILD_SHARED_LIBRARIES OFF)
+if(NOT APPLE)
+    SET(CMAKE_EXE_LINKER_FLAGS "-static")
+endif (NOT APPLE)
 
 if (WITH_BINLOG)
-  add_executable(mydumper mydumper.c binlog.c server_detect.c g_unix_signal.c)
+
+  add_executable(mydumper mydumper.c binlog.c server_detect.c g_unix_signal.c connection.c getPassword.c)
 else (WITH_BINLOG)
-  add_executable(mydumper mydumper.c server_detect.c g_unix_signal.c)
+  add_executable(mydumper mydumper.c server_detect.c g_unix_signal.c connection.c getPassword.c)
 endif (WITH_BINLOG)
-target_link_libraries(mydumper ${MYSQL_LIBRARIES} ${GLIB2_LIBRARIES} ${GTHREAD2_LIBRARIES} ${PCRE_PCRE_LIBRARY} ${ZLIB_LIBRARIES})
+target_link_libraries(mydumper ${MYSQL_LIBRARIES} ${GLIB2_LIBRARIES} ${GTHREAD2_LIBRARIES} ${PCRE_PCRE_LIBRARY} ${ZLIB_LIBRARIES} stdc++)
 
 
-add_executable(myloader myloader.c)
-target_link_libraries(myloader ${MYSQL_LIBRARIES} ${GLIB2_LIBRARIES} ${GTHREAD2_LIBRARIES} ${PCRE_PCRE_LIBRARY} ${ZLIB_LIBRARIES})
+add_executable(myloader myloader.c connection.c getPassword.c)
+target_link_libraries(myloader ${MYSQL_LIBRARIES} ${GLIB2_LIBRARIES} ${GTHREAD2_LIBRARIES} ${PCRE_PCRE_LIBRARY} ${ZLIB_LIBRARIES} stdc++)
 
 INSTALL(TARGETS mydumper myloader
   RUNTIME DESTINATION bin
